@@ -1,0 +1,145 @@
+#!/usr/bin/env python
+
+import sys
+import getopt
+import threading
+import os
+import time 
+import signal
+import urllib2
+import json 
+
+# Generate your own API KEY here https://www.pushbullet.com/#settings/account
+PUSH_BULLET_API_KEY = "YourOwnApiKey"
+PUSH_BULLET_API_URL = "https://api.pushbullet.com/v2/pushes"
+NOTIFICATION_HEADER = "Script finished: "
+NOTIFICATION_CONTENT = "Has finished!!"
+CHECK_FREQ_SECONDS = 1
+
+# Notification functions
+def notify_via_pushbullet(process):
+    # create the request object and set some headers
+    req = urllib2.Request(PUSH_BULLET_API_URL)
+    req.add_header('Access-Token', PUSH_BULLET_API_KEY)
+    req.add_header("Content-type", "application/json")
+    # Convert our data to json
+    data = {'body':NOTIFICATION_CONTENT,'title':NOTIFICATION_HEADER + str(process),'type':'note'}
+    req.add_data(json.dumps(data))
+    res = urllib2.urlopen(req)
+
+def send_notification(process):
+  notify_via_pushbullet(process)
+  # Write your own notification mojo here...
+  sys.exit(0)
+
+#######################
+
+
+def is_pid_running(pid):
+  """
+  Tries to send kill -0 to a given PID, if it succeds, then the PID exists 
+  """
+  try:
+    os.kill(pid,0)
+  except OSError:
+    return False
+  else:
+  	return True
+
+def log(message):
+  if not SILENT:
+  	print message
+
+def get_process_name(pid):
+  try:
+    with open(os.path.join('/proc/',pid,cmdline),r) as pidfile:
+      return filter_non_printable(pidfile,readline())
+  except:
+    return ""
+
+def start_pid_monitor(pid):
+  """
+  Creates a demonized thread that will check if the PID is still 
+  running every CHECK_FREQ_SECONDS seconds.
+  """
+  pid_name = get_process_name(pid)
+  log("Monitoring: %s - %s" % (pid,pid_name)) 
+  t = threading.Thread(target=pid_monitor,args=[pid])
+  t.daemon = True
+  try:
+    t.start()
+    while True: 
+      #Keep alive main process, cus' if it dies it will take down our daemon with it.
+      pass
+
+  # Capture Any KeyboardInterrupt and SIGINT
+  except (KeyboardInterrupt, SystemExit):
+    log("SysExit! Exiting...")
+    sys.exit(0)
+ 
+def pid_monitor(pid):
+  """
+  Checks for the existence of a PID every CHECK_FREQ_SECONDS, if the process
+  doesn't exists anymore, then the notification function will be executed
+  """
+  log("Checking..")
+  while True:
+    if not is_pid_running(pid):
+      send_notification(pid)
+    else: 
+      log("Still running")
+      time.sleep(CHECK_FREQ_SECONDS)
+
+def usage():
+  return """ SYNOPSIS
+    notify [-c 'content'] [-t 'title'] [-p pid] [-v] 
+
+  DESCRIPTION
+    Sends a notification or executes an action.
+    If a PID is passed (-p or --pid), the notification will be sent when the process finishes, 
+    otherwise, it will be sent instantly
+
+    The following actions are available
+
+    -c 'text' --content='text' 
+      Sets the content of the notification
+      
+    -t 'text' --title='text'
+      Sets the content of the notification title
+      
+    -p num --pid=num
+      Finds a process with num as its PID and start to monitor it, then send a notification when it finishes  
+
+    -v --verbose
+      Print all the things!
+  """
+
+SILENT = False
+PID = None
+COMMAND = None
+try:
+  opts, args = getopt.getopt(sys.argv[1:], "C:t:c:p:vh",["help","command=","title=","content=","pid=","verbose"])
+  for opt, arg in opts:
+    if opt in ('-t','--title'):
+    	NOTIFICATION_HEADER = arg
+    elif opt in ('-C','--command'):
+        #ToDo
+      COMMAND = arg
+    elif opt in ('-c','--content'):
+      NOTIFICATION_CONTENT = arg
+    elif opt in ('-p','--pid'):
+      PID = int(arg)
+    elif opt in ('-v','--verbose'):
+      SILENT = False
+    elif opt in ('-h','--help'):
+      print usage()
+      sys.exit(0)
+except getopt.GetoptError:
+  pass
+
+
+if PID is None:
+	send_notification("Script")
+else:
+  start_pid_monitor(PID)
+
